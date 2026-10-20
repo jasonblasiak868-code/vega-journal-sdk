@@ -231,6 +231,13 @@ class Genome(unittest.TestCase):
         with self.assertRaises(J.JournalRefused):
             self.r.j.anchor("never defined", self.e2["sha256"], 0, 3)
 
+    def test_an_idea_cannot_grow_from_itself_and_is_told_so(self):
+        s, e = self.quote(self.text2, "harmonic echo")
+        self.r.j.idea("harmonic echo", self.e2["sha256"], s, e)
+        with self.assertRaises(J.JournalRefused) as cm:
+            self.r.j.derive("harmonic echo", "harmonic echo", self.e2["sha256"])
+        self.assertIn("itself", str(cm.exception))
+
     def test_origin_is_who_said_it_and_a_models_suggestion_is_never_credited_to_the_owner(self):
         s1, e1 = self.quote(self.text1, "tracers could make the model's parameters audible")
         self.r.j.idea("audible tracers", self.e1["sha256"], s1, e1)

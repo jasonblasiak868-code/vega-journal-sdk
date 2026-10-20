@@ -16,7 +16,7 @@ MUTATIONS = [
     ("a plain add cannot make an answer", JN, 'if kind == "answer":', "if False:"),
     ("text size cap", JN, "len(text) > MAX_TEXT or ", ""),
     ("NUL refused", JN, r' or "\x00" in text', ""),
-    ("the quote must lie inside the entry", JN, "not 0 <= start < end <= len(e[\"text\"])", "False"),
+    ("the quote must lie inside the entry", JN, "not 0 <= start < end <= len(text)", "False"),
     ("duplicate ideas refused", JN, "if name.casefold() in self.ideas:", "if False:"),
     ("no cycles", JN, "if x == c:\n                raise JournalRefused", "if False:\n                raise JournalRefused"),
     ("no self edge", JN, "if c == p:", "if False:"),
