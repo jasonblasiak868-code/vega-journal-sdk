@@ -1,0 +1,14 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vega-journal-sdk"
+version = "0.1.0"
+description = "A verbatim, hash-chained question-and-answer journal with a thought-genome map: where each idea first appeared, who said it, what it grew from, and a receipt that proves it."
+requires-python = ">=3.10"
+dependencies = ["cryptography>=42", "vega-custody-sdk", "vega-superproof-sdk"]
+license = {file = "LICENSE"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
