@@ -22,7 +22,7 @@ import time
 
 from vega_custody.dag.dag import DagError, contains_credential
 from vega_journal import crypto, grounded, merkle
-from vega_journal.journal import Journal, JournalRefused, MARK, MAX_TEXT, SPEAKERS, _tokens
+from vega_journal.journal import Journal, JournalRefused, MARK, MAX_TEXT, SPEAKERS, _tokens, atomic
 
 MODES = ("full", "answers_only")
 DAY = 86400
@@ -214,6 +214,7 @@ class PrivateJournal(Journal):
         if self.init is None:
             raise JournalRefused("this journal has not been initialised: call initialise() first")
 
+    @atomic
     def initialise(self, signer: crypto.Signer):
         """The first record: it names the owner and holds the service key wrapped under the master key."""
         if self.records:
@@ -228,6 +229,7 @@ class PrivateJournal(Journal):
         self._write("init", owner_sign=self.owner_sign.hex(), service_wrap=(n + ct).hex(), sig=signer.sign("init", ident))
         return self.init
 
+    @atomic
     def _make_entry(self, speaker, text, session, kind, answers=None, tags=(), media=None, extra=None):
         self._need_owner()
         if speaker not in SPEAKERS or kind not in ("note", "question", "answer", "wish"):
@@ -305,6 +307,7 @@ class PrivateJournal(Journal):
             out[sha] = (n + c).hex()
         return out
 
+    @atomic
     def grant(self, grantee_sign: bytes, grantee_box: bytes, mode: str, scope: dict, signer: crypto.Signer, expires_at: int = None) -> str:
         self._need_owner()
         if mode not in MODES or not isinstance(grantee_sign, (bytes, bytearray)) or len(grantee_sign) != 32 or not isinstance(grantee_box, (bytes, bytearray)) or len(grantee_box) != 32:
@@ -323,6 +326,7 @@ class PrivateJournal(Journal):
         self._write("grant", grant_id=gid, sig=signer.sign("grant", body), **body, **extra)
         return gid
 
+    @atomic
     def share_new(self, grant_id: str, signer: crypto.Signer):
         """Wrap keys for entries written since a 'full' grant was made, for the same scope. Needs the grant key, which the owner's process keeps only while it runs."""
         self._need_owner()
@@ -335,6 +339,7 @@ class PrivateJournal(Journal):
         self._write("grant_add", sig=signer.sign("grant_add", body), **body)
         return len(add)
 
+    @atomic
     def revoke(self, grant_id: str, signer: crypto.Signer):
         self._need_owner()
         if grant_id not in self.grants or grant_id in self.revoked:
@@ -360,6 +365,7 @@ class PrivateJournal(Journal):
         return out
 
     # ---- legacy -------------------------------------------------------------------------------------------------------------------------------------------------
+    @atomic
     def set_legacy(self, executors: dict, threshold: int, cooling_days: int, beneficiaries: list, signer: crypto.Signer):
         self._need_owner()
         if not isinstance(executors, dict) or not 2 <= len(executors) <= 12 or isinstance(threshold, bool) or not isinstance(threshold, int) or not 2 <= threshold <= len(executors):
@@ -405,6 +411,7 @@ class PrivateJournal(Journal):
         now = int(self._clock()) if now is None else now
         return {"legacy_version": self.legacy["body"]["version"], "declared_at": now, "evidence_sha256": evidence_sha256, "cooling_until": now + self.legacy["body"]["cooling_days"] * DAY}
 
+    @atomic
     def declare_death(self, body: dict, sigs: dict) -> str:
         if self.legacy is None:
             raise JournalRefused("no legacy policy is set")
@@ -414,6 +421,7 @@ class PrivateJournal(Journal):
         self._write("death", body=body, sigs=sigs)
         return self.records[-1]["sha256"]
 
+    @atomic
     def alive(self, death_id: str, signer: crypto.Signer):
         self._need_owner()
         d = self.deaths.get(death_id)
@@ -428,6 +436,7 @@ class PrivateJournal(Journal):
             return "living"
         return "legacy_effective" if any(now >= d["body"]["cooling_until"] for d, _ in live) else "death_declared_cooling"
 
+    @atomic
     def release(self, shares: dict, now: int = None) -> bool:
         """Executors present their decrypted shares {name: bytes(x + share)}. Needs an effective, uncancelled declaration. On success the service key is recovered in memory and the policy applies."""
         if self.status(now) != "legacy_effective":

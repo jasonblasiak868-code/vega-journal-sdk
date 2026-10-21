@@ -12,13 +12,15 @@ ORIGIN MATTERS: an idea anchored in an OBSERVER or MODEL entry is credited to th
 RECEIPTS: conception_receipt(idea) gives the earliest anchor, its record hash, the Merkle root of the whole journal and an inclusion proof, so a third party can check the entry was in the journal at that point.
 HONEST LIMITS: the times are the machine's clock when the record was written (anchor the root externally, for example with a public timestamp, if the date must be provable to someone who does not trust the
 machine). A journal proves WHAT was recorded and WHEN it was recorded; conception is not priority, and who invented an idea first is for a filing and the law, not for this file."""
+import functools
 import hashlib
 import json
 import os
 import re
+import threading
 import time
 
-from vega_custody.dag.dag import DagError, contains_credential
+from vega_custody.dag.dag import DagError, _FileLock, contains_credential
 from vega_journal import merkle
 
 SPEAKERS = ("owner", "model", "observer", "system")
@@ -31,6 +33,25 @@ ZERO = "0" * 64
 
 class JournalRefused(ValueError):
     pass
+
+
+_GUARD, _LOCKS = threading.Lock(), {}
+
+
+def _path_lock(path):
+    """One re-entrant lock per journal file in this process, shared by every Journal object on it."""
+    key = os.path.abspath(os.fspath(path))
+    with _GUARD:
+        return _LOCKS.setdefault(key, threading.RLock())
+
+
+def atomic(fn):
+    """A check and the write that follows it run as one step ('does that idea exist?' then record it): no other writer gets in between."""
+    @functools.wraps(fn)
+    def inner(self, *a, **k):
+        with self._lock:
+            return fn(self, *a, **k)
+    return inner
 
 
 def _canon(o) -> bytes:
@@ -48,6 +69,7 @@ def _tokens(text):
 class Journal:
     def __init__(self, path, dag, clock=time.time):
         self.path, self.dag, self._clock = os.fspath(path), dag, clock
+        self._lock = _path_lock(self.path)
         self._reset()
         if os.path.exists(self.path):
             self._load()
@@ -55,6 +77,7 @@ class Journal:
     def _reset(self):
         self.records, self.entries, self.ideas, self.edges = [], {}, {}, []
         self._index, self._df = {}, {}
+        self._size = 0                                            # the size of the file this view was built from: a writer whose view is stale is refused
 
     def _index_text(self, rec) -> str:
         """The plain text of an entry for indexing and quoting. A private journal overrides this (and returns '' while it is locked)."""
@@ -79,6 +102,7 @@ class Journal:
                 raise JournalRefused("the chain breaks at record %d: the journal was edited, reordered or cut" % n)
             self._apply(rec)
             prev = rec["sha256"]
+        self._size = os.path.getsize(self.path)
 
     def _apply(self, rec):
         self.records.append(rec)
@@ -108,26 +132,34 @@ class Journal:
         return self.records[-1]["sha256"] if self.records else ZERO
 
     def _write(self, rec_type, **fields) -> dict:
-        now = int(self._clock())
-        if self.records and now < self.records[-1]["at"]:
-            raise JournalRefused("the clock went backwards: refusing to write a record dated before the last one")
-        rec = {"i": len(self.records), "at": now, "type": rec_type, "prev": self.head}
-        rec.update(fields)
-        rec["sha256"] = _hash(rec)
-        try:
-            self.dag.record("JOURNAL_RECORD", {"type": rec_type, "position": rec["i"], "record_sha256": rec["sha256"]})
-        except DagError as exc:
-            raise JournalRefused("the chain could not be written: nothing was recorded: %s" % exc) from exc
-        with open(self.path, "a", encoding="utf-8", newline="\n") as fh:
-            fh.write(json.dumps(rec, sort_keys=True, separators=(",", ":"), ensure_ascii=True) + "\n")
-            fh.flush()
-            os.fsync(fh.fileno())
-        self._apply(rec)
-        return rec
+        # In this process every writer on this file takes the same lock; across processes the file lock does the same job. Inside it the writer checks that the file is still the
+        # one its view was built from, so a record can never be given a position or a previous hash that someone else has already used (which would fork the file's hash chain).
+        with self._lock, _FileLock(self.path):
+            size_now = os.path.getsize(self.path) if os.path.exists(self.path) else 0
+            if size_now != self._size:
+                raise JournalRefused("the journal changed underneath this writer (another writer?): reopen it. Nothing was recorded.")
+            now = int(self._clock())
+            if self.records and now < self.records[-1]["at"]:
+                raise JournalRefused("the clock went backwards: refusing to write a record dated before the last one")
+            rec = {"i": len(self.records), "at": now, "type": rec_type, "prev": self.head}
+            rec.update(fields)
+            rec["sha256"] = _hash(rec)
+            try:
+                self.dag.record("JOURNAL_RECORD", {"type": rec_type, "position": rec["i"], "record_sha256": rec["sha256"]})
+            except DagError as exc:
+                raise JournalRefused("the chain could not be written: nothing was recorded: %s" % exc) from exc
+            with open(self.path, "a", encoding="utf-8", newline="\n") as fh:
+                fh.write(json.dumps(rec, sort_keys=True, separators=(",", ":"), ensure_ascii=True) + "\n")
+                fh.flush()
+                os.fsync(fh.fileno())
+            self._size = os.path.getsize(self.path)
+            self._apply(rec)
+            return rec
 
     def _clone_empty(self):
         fresh = type(self).__new__(type(self))
         fresh.path, fresh.dag, fresh._clock = self.path, self.dag, self._clock
+        fresh._lock = self._lock
         fresh._copy_config_from(self)
         fresh._reset()
         return fresh
@@ -154,6 +186,7 @@ class Journal:
         return not problems, problems
 
     # ---- entries -------------------------------------------------------------------------------------------------------------------
+    @atomic
     def _entry(self, speaker, text, session, kind, answers=None):
         if speaker not in SPEAKERS or kind not in KINDS:
             raise JournalRefused("speaker is one of %s and kind one of %s" % (SPEAKERS, KINDS))
@@ -239,6 +272,7 @@ class Journal:
             raise JournalRefused("an idea name is 2 to 61 letters, digits, spaces, '.', '_' or '-'")
         return name.strip()
 
+    @atomic
     def idea(self, name, entry_id, start, end) -> dict:
         name = self._name(name)
         if name.casefold() in self.ideas:
@@ -246,6 +280,7 @@ class Journal:
         e, q = self._quote(entry_id, start, end)
         return self._write("idea", name=name, entry=entry_id, start=start, end=end, quote_sha256=q, origin=e["speaker"])
 
+    @atomic
     def anchor(self, name, entry_id, start, end) -> dict:
         name = self._name(name)
         if name.casefold() not in self.ideas:
@@ -253,6 +288,7 @@ class Journal:
         e, q = self._quote(entry_id, start, end)
         return self._write("anchor", name=self.ideas[name.casefold()]["name"], entry=entry_id, start=start, end=end, quote_sha256=q, origin=e["speaker"])
 
+    @atomic
     def derive(self, child, parent, entry_id) -> dict:
         c, p = self._name(child).casefold(), self._name(parent).casefold()
         if c not in self.ideas or p not in self.ideas:

@@ -15,7 +15,7 @@ A private, verbatim, hash-chained question-and-answer journal with a thought-gen
 | **Version** | 0.1.0 |
 | **Python** | >=3.10 |
 | **Dependencies** | cryptography>=42, vega-custody-sdk, vega-superproof-sdk |
-| **Tests** | 69 tests in 2 files (all passing) |
+| **Tests** | 74 tests in 3 files (all passing) |
 | **Mutation tests** | 57 killed, 1 could not apply, 1 survived (redundant self-edge check caught by cycle detection) |
 | **Status** | All modules BUILT and tested |
 | **Layer** | 0 record (foundation) — the append-only chain everything writes to |
@@ -186,8 +186,9 @@ This version publishes no user-defined constraint hooks; constraints are fixed b
 
 ## Tests
 
-69 tests total:
-- `tests/redteam_1_journal.py`: 24 tests (verbatim storage, chain integrity, tampering detection, search, thought genome, origin, receipts, Merkle proofs)
+74 tests total:
+- `tests/test_findings_20261020.py`: 4 tests (concurrent writes, stale views, one-time idea creation)
+- `tests/redteam_1_journal.py`: 25 tests (verbatim storage, chain integrity, tampering detection, search, thought genome, origin, receipts, Merkle proofs)
 - `tests/redteam_2_private.py`: 45 tests (encryption at rest, locked open, ciphertext binding, grants, grounded answers, legacy policy, last-rites)
 
 Run:

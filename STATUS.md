@@ -8,7 +8,7 @@
 - last_rites
 - crypto / merkle
 
-Tests: 69 tests in 2 files, all passing.
+Tests: 74 tests in 3 files, all passing.
 
 ## DESIGNED ONLY (not built)
 

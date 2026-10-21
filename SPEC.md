@@ -337,7 +337,7 @@ py -3.12 tests/redteam_1_journal.py
 py -3.12 tests/redteam_2_private.py
 ```
 
-**What passing means:** All 69 tests pass; the reference implementation behaves as specified in this document for the tested scenarios.
+**What passing means:** All 74 tests pass; the reference implementation behaves as specified in this document for the tested scenarios.
 
 **What passing does NOT mean:**
 - The cryptography has been independently reviewed.
