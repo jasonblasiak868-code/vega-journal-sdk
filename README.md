@@ -2,6 +2,13 @@
 
 ![vega-journal-sdk](assets/tile.svg)
 
+<!-- vega-install-order -->
+> **Build order: 3/3. This kit needs 2 other Vega kits installed first.** Install them in this order, then this one:
+> 1/3 `vega-custody-sdk`  
+> 2/3 `vega-superproof-sdk`  
+> 3/3 `vega-journal-sdk` (this kit)
+> Install each with `pip install --no-deps git+https://github.com/jasonblasiak868-code/<name>` in the order shown, plus `pip install cryptography`. Full steps: [INTEGRATION_GUIDE](https://github.com/jasonblasiak868-code/vega-umbrella-sdk/blob/main/INTEGRATION_GUIDE.md).
+
 A private, verbatim, hash-chained question-and-answer journal with a thought-genome map: every idea is anchored to its first appearance in the owner's own words, and a Merkle receipt proves it was in the journal at that time. The journal is encrypted at rest; the owner decides who reads what, and a legacy policy releases selected entries after death only as the owner prescribed.
 
 > **Licensing.** Source-available, not open source. Free for personal use; free for registered small businesses (under US$1M revenue and valuation); everyone else needs a commercial license (see LICENSE; for a commercial license write to jasonblasiak.ai.mail@gmail.com). Patent pending (U.S. provisional application 64/178,949 and others). Draft licence text, not yet reviewed by an attorney.
