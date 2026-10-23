@@ -13,6 +13,7 @@ import hashlib
 import json
 import re
 
+from vega_custody.dag.dag import contains_credential
 from vega_journal import crypto, merkle
 from vega_journal.journal import JournalRefused
 
@@ -36,6 +37,8 @@ def wish(pj, signer: crypto.Signer, wish_id: str, kind: str, item: str, recipien
     for name, v, lo, hi in (("item", item, 1, 500), ("recipient", recipient, 0, 200), ("note", note, 0, 2000)):
         if not isinstance(v, str) or not lo <= len(v) <= hi:
             raise JournalRefused("%s is %d to %d characters" % (name, lo, hi))
+    if any(contains_credential(v) for v in (wish_id, item, recipient, note)):
+        raise JournalRefused("a wish cannot contain a credential-shaped value: the journal would redact it and the wish would be lost; leave the secret out and say where it is kept")
     if assurance is not None and (isinstance(assurance, bool) or not isinstance(assurance, int) or not 0 <= assurance <= 4):
         raise JournalRefused("assurance is the identity level 0 to 4, or None")
     if signer.public != pj.owner_sign:
@@ -76,6 +79,8 @@ def witness(pj, wish_record_sha: str, witness_signer: crypto.Signer):
     rec = pj.wish_records.get(wish_record_sha)
     if rec is None:
         raise JournalRefused("no such valid wish record")
+    if witness_signer.public == pj.owner_sign:
+        raise JournalRefused("the owner cannot witness their own wish")
     body = {"wish": wish_record_sha, "payload_sha256": rec["payload_sha256"]}
     pj._write("witness", wish=wish_record_sha, witness_sign=witness_signer.public.hex(), sig=witness_signer.sign("witness", body))
 
@@ -90,7 +95,7 @@ def statement_of_wishes(pj, signer: crypto.Signer, now: int = None) -> dict:
         ws = pj.witness_sigs.get(rec["sha256"], {})
         wishes.append({"wish_id": payload["wish_id"], "payload_text": text, "payload_sha256": rec["payload_sha256"], "record_sha256": rec["sha256"], "position": rec["i"], "recorded_at": rec["at"],
                        "owner_sig": rec["osig"], "assurance": rec["assurance"], "tags": rec["tags"], "witnesses": [{"witness_sign": k, "sig": v} for k, v in sorted(ws.items())],
-                       "status": "witnessed" if len(ws) >= 2 else "owner_signed", "proof": pj.inclusion_proof(rec["sha256"])})
+                       "status": "witnessed" if len([k for k in ws if k != pj.owner_sign.hex()]) >= 2 else "owner_signed", "proof": pj.inclusion_proof(rec["sha256"])})
     body = {"notice": NOTICE, "owner_sign": pj.owner_sign.hex(), "exported_at": int(pj._clock()) if now is None else now, "journal_root": pj.root(), "journal_size": len(pj.records), "chain_head": pj.head, "wishes": wishes,
             "assurance_note": "assurance is the identity level the owner reported when signing (see the identity SDK); verify that assertion separately"}
     return dict(body, export_sig=signer.sign("statement", body))
@@ -115,13 +120,19 @@ def verify_statement(packet) -> list:
                 problems.append("%s: the owner's signature does not verify" % wid)
             if not merkle.verify(packet["journal_root"], w["record_sha256"], [tuple(x) for x in w["proof"]["path"]]):
                 problems.append("%s: not in the journal root" % wid)
-            good = 0
+            good = set()                                    # DISTINCT witness keys with a valid signature; the owner cannot witness their own wish
             for x in w["witnesses"]:
-                if crypto.verify(bytes.fromhex(x["witness_sign"]), "witness", {"wish": w["record_sha256"], "payload_sha256": w["payload_sha256"]}, x["sig"]):
-                    good += 1
+                key = x["witness_sign"]
+                if crypto.verify(bytes.fromhex(key), "witness", {"wish": w["record_sha256"], "payload_sha256": w["payload_sha256"]}, x["sig"]):
+                    if key == packet["owner_sign"]:
+                        problems.append("%s: the owner is listed as their own witness" % wid)
+                    elif key in good:
+                        problems.append("%s: the same witness is listed twice" % wid)
+                    else:
+                        good.add(key)
                 else:
                     problems.append("%s: a witness signature does not verify" % wid)
-            if w["status"] != ("witnessed" if good >= 2 else "owner_signed"):
+            if w["status"] != ("witnessed" if len(good) >= 2 else "owner_signed"):
                 problems.append("%s: the status does not match the witnesses" % wid)
             if json.loads(w["payload_text"]).get("wish_id") != w["wish_id"] or w["wish_id"] in seen:
                 problems.append("%s: wrong or repeated wish id" % wid)

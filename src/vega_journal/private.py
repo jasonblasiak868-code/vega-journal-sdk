@@ -189,12 +189,24 @@ class PrivateJournal(Journal):
         lg = self.legacy
         if lg is None or not isinstance(body, dict) or body.get("legacy_version") != lg["body"]["version"] or not isinstance(sigs, dict):
             return None
+        if set(body) != {"legacy_version", "declared_at", "evidence_sha256", "cooling_until"}:
+            return None                              # exactly the fields prepare_death builds: a missing or extra field is refused, never half-read later
+        for k in ("legacy_version", "declared_at", "cooling_until"):
+            if isinstance(body[k], bool) or not isinstance(body[k], int) or not 0 <= body[k] < 2 ** 40:
+                return None
+        ev = body["evidence_sha256"]
+        if not isinstance(ev, str) or len(ev) != 64:
+            return None
+        if body["cooling_until"] != body["declared_at"] + lg["body"]["cooling_days"] * DAY:
+            return None                              # the cooling-off length is the policy's, not whatever the signers wrote
         return {n for n, sg in sigs.items() if n in lg["body"]["executors"] and crypto.verify(bytes.fromhex(lg["body"]["executors"][n]["sign"]), "death", {"death": body}, sg)}
 
     def _apply_death(self, rec):
         good = self._death_good(rec["body"], rec["sigs"])
         if good is not None and len(good) >= self.legacy["body"]["threshold"]:
-            self.deaths[rec["sha256"]] = {"body": rec["body"], "executors": sorted(good), "at": rec["at"]}
+            # cooling-off can end no earlier than the policy length after the declaration was RECORDED, so a back-dated body cannot shorten it
+            body = dict(rec["body"], cooling_until=max(rec["body"]["cooling_until"], int(rec["at"]) + self.legacy["body"]["cooling_days"] * DAY))
+            self.deaths[rec["sha256"]] = {"body": body, "executors": sorted(good), "at": rec["at"]}
         else:
             self.rejected += 1
 
